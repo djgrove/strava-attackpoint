@@ -10,10 +10,15 @@ import (
 // WorkoutData holds the mapped values to submit to AP.
 type WorkoutData struct {
 	ActivityTypeID string
-	Date           string // form's date field value
+	Day            string // "01"-"31"
+	Month          string // "01"-"12"
+	Year           string // "2026"
+	StartHour      string // "0"-"23" or "-1" for unset
 	Distance       string
+	DistanceUnits  string // "kilometers" or "miles"
 	Duration       string // HH:MM:SS or similar
 	AverageHR      string
+	MaxHR          string
 	ElevationGain  string
 	Description    string
 }
@@ -31,10 +36,15 @@ func (c *Client) SubmitWorkout(schema *FormSchema, workout *WorkoutData) error {
 		return fmt.Errorf("submitting workout: %w", err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+
+	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("workout submission failed with status %d", resp.StatusCode)
+		preview := string(body)
+		if len(preview) > 500 {
+			preview = preview[:500]
+		}
+		return fmt.Errorf("workout submission failed with status %d: %s", resp.StatusCode, preview)
 	}
 
 	return nil
@@ -42,7 +52,6 @@ func (c *Client) SubmitWorkout(schema *FormSchema, workout *WorkoutData) error {
 
 // UpdateWorkout edits an existing training entry.
 func (c *Client) UpdateWorkout(editPath string, schema *FormSchema, workout *WorkoutData) error {
-	// Fetch the edit form to get its specific action URL and any hidden fields.
 	resp, err := c.Get(editPath)
 	if err != nil {
 		return fmt.Errorf("fetching edit form: %w", err)
@@ -78,42 +87,64 @@ func (c *Client) UpdateWorkout(editPath string, schema *FormSchema, workout *Wor
 func buildFormData(schema *FormSchema, workout *WorkoutData) url.Values {
 	data := url.Values{}
 
-	// Set known fields by searching for them in the discovered schema.
 	for name := range schema.Fields {
+		lower := strings.ToLower(name)
 		switch {
-		case matchesField(name, "activitytype"):
+		case name == "activitytypeid":
 			data.Set(name, workout.ActivityTypeID)
-		case matchesField(name, "distance"):
+		case name == "session-day":
+			data.Set(name, workout.Day)
+		case name == "session-month":
+			data.Set(name, workout.Month)
+		case name == "session-year":
+			data.Set(name, workout.Year)
+		case name == "sessionstarthour":
+			if workout.StartHour != "" {
+				data.Set(name, workout.StartHour)
+			}
+		case name == "distance":
 			if workout.Distance != "" {
 				data.Set(name, workout.Distance)
 			}
-		case matchesField(name, "sessionlength", "duration"):
+		case name == "distanceunits":
+			data.Set(name, workout.DistanceUnits)
+		case name == "sessionlength":
 			if workout.Duration != "" {
 				data.Set(name, workout.Duration)
 			}
-		case matchesField(name, "ahr", "heartrate", "avghr"):
+		case name == "ahr":
 			if workout.AverageHR != "" {
 				data.Set(name, workout.AverageHR)
 			}
-		case matchesField(name, "climb", "elevation", "gain"):
+		case name == "mhr":
+			if workout.MaxHR != "" {
+				data.Set(name, workout.MaxHR)
+			}
+		case name == "climb":
 			if workout.ElevationGain != "" {
 				data.Set(name, workout.ElevationGain)
 			}
-		case matchesField(name, "description", "notes", "logtextarea", "text"):
+		case name == "description":
 			data.Set(name, workout.Description)
+		case lower == "workouttypeid":
+			data.Set(name, "1") // Default to "Training"
+		case name == "isplan":
+			data.Set(name, "0") // Not a planned workout
+		case name == "intensity":
+			data.Set(name, "0") // Default intensity
+		case name == "map":
+			data.Set(name, "0") // No map
+		case name == "shoes":
+			data.Set(name, "null") // Not specified
+		case name == "restday", name == "sick", name == "injured",
+			name == "spiked", name == "controls",
+			name == "weight", name == "rhr", name == "sleep",
+			name == "pace", name == "wunit",
+			name == "climb_grade", name == "climb_angle",
+			name == "newactivitytype", name == "activitymodifiers":
+			data.Set(name, "") // Send empty for optional fields
 		}
 	}
 
 	return data
-}
-
-// matchesField checks if a field name contains any of the given substrings (case-insensitive).
-func matchesField(name string, substrings ...string) bool {
-	lower := strings.ToLower(name)
-	for _, s := range substrings {
-		if strings.Contains(lower, strings.ToLower(s)) {
-			return true
-		}
-	}
-	return false
 }

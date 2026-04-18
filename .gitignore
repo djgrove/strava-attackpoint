@@ -12,5 +12,8 @@ Thumbs.db
 *.swp
 *.swo
 
+# Credentials
+login.txt
+
 # Build output
 dist/

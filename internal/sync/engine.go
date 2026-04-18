@@ -15,25 +15,27 @@ import (
 type Result struct {
 	ActivityID   int64
 	ActivityName string
-	Status       string // "synced", "skipped", "failed"
+	Status       string // "synced", "skipped", "updated", "failed"
 	Error        error
 	Warning      string
 }
 
 // Engine orchestrates the Strava-to-AP sync process.
 type Engine struct {
-	stravaClient *strava.Client
-	apClient     *attackpoint.Client
-	syncState    *config.SyncState
-	formSchema   *attackpoint.FormSchema
+	stravaClient    *strava.Client
+	apClient        *attackpoint.Client
+	syncState       *config.SyncState
+	formSchema      *attackpoint.FormSchema
+	existingEntries map[string]string // strava activity ID → AP session ID
 }
 
 // NewEngine creates a sync engine.
 func NewEngine(sc *strava.Client, ap *attackpoint.Client, state *config.SyncState) *Engine {
 	return &Engine{
-		stravaClient: sc,
-		apClient:     ap,
-		syncState:    state,
+		stravaClient:    sc,
+		apClient:        ap,
+		syncState:       state,
+		existingEntries: make(map[string]string),
 	}
 }
 
@@ -60,13 +62,23 @@ func (e *Engine) SyncSince(since time.Time) ([]Result, error) {
 		return nil, nil
 	}
 
+	// Scan AP log for existing entries with Strava URLs.
+	if e.apClient.UserID != "" {
+		fmt.Print("Scanning AP log for existing entries... ")
+		if err := e.scanExistingEntries(since); err != nil {
+			fmt.Printf("warning: %v\n", err)
+		} else {
+			fmt.Printf("found %d synced entries\n", len(e.existingEntries))
+		}
+	}
+
 	var results []Result
 	for i, summary := range activities {
 		idStr := strconv.FormatInt(summary.ID, 10)
 		fmt.Printf("[%d/%d] Syncing \"%s\" (%s)... ", i+1, len(activities), summary.Name, summary.StartDateLocal[:10])
 
-		// Check idempotency.
-		if _, exists := e.syncState.Activities[idStr]; exists {
+		// Check sync state first — skip if already synced successfully.
+		if _, synced := e.syncState.Activities[idStr]; synced {
 			fmt.Println("skipped (already synced)")
 			results = append(results, Result{
 				ActivityID:   summary.ID,
@@ -74,6 +86,22 @@ func (e *Engine) SyncSince(since time.Time) ([]Result, error) {
 				Status:       "skipped",
 			})
 			continue
+		}
+
+		// Check if entry already exists on AP (has Strava URL in description) but
+		// is not in our sync state (e.g., from a previous broken sync).
+		if sessionID, exists := e.existingEntries[idStr]; exists {
+			fmt.Print("replacing existing... ")
+			if err := e.apClient.DeleteSession(sessionID); err != nil {
+				fmt.Printf("FAILED to delete: %v\n", err)
+				results = append(results, Result{
+					ActivityID:   summary.ID,
+					ActivityName: summary.Name,
+					Status:       "failed",
+					Error:        fmt.Errorf("deleting existing entry: %w", err),
+				})
+				continue
+			}
 		}
 
 		result := e.syncActivity(&summary)
@@ -100,14 +128,12 @@ func (e *Engine) SyncSince(since time.Time) ([]Result, error) {
 
 // SyncActivity re-syncs a single activity by Strava ID.
 func (e *Engine) SyncActivity(activityID int64) (*Result, error) {
-	// Discover AP form.
 	schema, err := e.apClient.DiscoverForm()
 	if err != nil {
 		return nil, fmt.Errorf("discovering AP form: %w", err)
 	}
 	e.formSchema = schema
 
-	// Fetch full activity details.
 	activity, err := e.stravaClient.FetchActivity(activityID)
 	if err != nil {
 		return nil, fmt.Errorf("fetching activity: %w", err)
@@ -115,23 +141,24 @@ func (e *Engine) SyncActivity(activityID int64) (*Result, error) {
 
 	idStr := strconv.FormatInt(activityID, 10)
 
-	// Check if previously synced — if so, update instead of create.
-	if synced, exists := e.syncState.Activities[idStr]; exists {
-		fmt.Printf("Re-syncing \"%s\" (updating existing AP entry)... ", activity.Name)
-		result := e.updateActivity(activity, synced.APEntryURL)
-		if result.Error != nil {
-			fmt.Printf("FAILED: %v\n", result.Error)
-		} else {
-			fmt.Println("done")
+	// Scan AP log for existing entry with this Strava URL.
+	if e.apClient.UserID != "" {
+		startTime, err := activity.StartTime()
+		if err == nil {
+			_ = e.scanExistingEntries(startTime.AddDate(0, 0, -1))
 		}
-
-		if err := config.SaveSyncState(e.syncState); err != nil {
-			return &result, fmt.Errorf("saving sync state: %w", err)
-		}
-		return &result, nil
 	}
 
-	// Not previously synced — create new.
+	// If found on AP, delete it first.
+	if sessionID, exists := e.existingEntries[idStr]; exists {
+		fmt.Printf("Deleting existing AP entry for \"%s\"... ", activity.Name)
+		if err := e.apClient.DeleteSession(sessionID); err != nil {
+			return nil, fmt.Errorf("deleting existing entry: %w", err)
+		}
+		fmt.Println("done")
+		delete(e.syncState.Activities, idStr)
+	}
+
 	fmt.Printf("Syncing \"%s\"... ", activity.Name)
 	result := e.syncActivity(activity)
 	if result.Error != nil {
@@ -144,6 +171,19 @@ func (e *Engine) SyncActivity(activityID int64) (*Result, error) {
 		return &result, fmt.Errorf("saving sync state: %w", err)
 	}
 	return &result, nil
+}
+
+func (e *Engine) scanExistingEntries(since time.Time) error {
+	entries, err := e.apClient.FetchLogEntries(e.apClient.UserID, since, time.Now())
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.StravaID != "" {
+			e.existingEntries[entry.StravaID] = entry.SessionID
+		}
+	}
+	return nil
 }
 
 func (e *Engine) syncActivity(activity *strava.Activity) Result {
@@ -176,39 +216,6 @@ func (e *Engine) syncActivity(activity *strava.Activity) Result {
 	// Record in sync state.
 	idStr := strconv.FormatInt(activity.ID, 10)
 	e.syncState.Activities[idStr] = config.SyncedActivity{
-		LastSyncedAt: time.Now(),
-	}
-
-	return Result{
-		ActivityID:   activity.ID,
-		ActivityName: activity.Name,
-		Status:       "synced",
-		Warning:      warning,
-	}
-}
-
-func (e *Engine) updateActivity(activity *strava.Activity, editPath string) Result {
-	workout, warning := mapping.MapActivity(activity, e.formSchema.ActivityTypes)
-
-	if editPath == "" {
-		// No edit path stored — fall back to creating new.
-		return e.syncActivity(activity)
-	}
-
-	if err := e.apClient.UpdateWorkout(editPath, e.formSchema, workout); err != nil {
-		return Result{
-			ActivityID:   activity.ID,
-			ActivityName: activity.Name,
-			Status:       "failed",
-			Error:        err,
-			Warning:      warning,
-		}
-	}
-
-	// Update sync state.
-	idStr := strconv.FormatInt(activity.ID, 10)
-	e.syncState.Activities[idStr] = config.SyncedActivity{
-		APEntryURL:   editPath,
 		LastSyncedAt: time.Now(),
 	}
 

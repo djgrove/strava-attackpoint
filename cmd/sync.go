@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	syncSince    string
-	syncActivity string
+	syncSince     string
+	syncActivity  string
+	syncCredsFile string
 )
 
 var syncCmd = &cobra.Command{
@@ -35,6 +36,7 @@ Examples:
 func init() {
 	syncCmd.Flags().StringVar(&syncSince, "since", "", "Sync activities after this date (YYYY-MM-DD)")
 	syncCmd.Flags().StringVar(&syncActivity, "activity", "", "Re-sync a specific Strava activity ID")
+	syncCmd.Flags().StringVar(&syncCredsFile, "creds-file", "", "File with AP username on line 1, password on line 2")
 	rootCmd.AddCommand(syncCmd)
 }
 
@@ -64,8 +66,13 @@ func runSync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Prompt for AP credentials.
-	apUsername, apPassword, err := promptAPCredentials()
+	// Get AP credentials.
+	var apUsername, apPassword string
+	if syncCredsFile != "" {
+		apUsername, apPassword, err = readCredsFile(syncCredsFile)
+	} else {
+		apUsername, apPassword, err = promptAPCredentials()
+	}
 	if err != nil {
 		return err
 	}
@@ -111,6 +118,23 @@ func runSync(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func readCredsFile(path string) (string, string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", "", fmt.Errorf("opening creds file: %w", err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Scan()
+	username := strings.TrimSpace(scanner.Text())
+	scanner.Scan()
+	password := strings.TrimSpace(scanner.Text())
+	if username == "" || password == "" {
+		return "", "", fmt.Errorf("creds file must have username on line 1, password on line 2")
+	}
+	return username, password, nil
+}
+
 func promptAPCredentials() (string, string, error) {
 	reader := bufio.NewReader(os.Stdin)
 
@@ -122,11 +146,18 @@ func promptAPCredentials() (string, string, error) {
 	username = strings.TrimSpace(username)
 
 	fmt.Print("AttackPoint password: ")
+	// Try secure terminal reading first; fall back to plain stdin.
 	passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println() // newline after hidden input
 	if err != nil {
-		return "", "", fmt.Errorf("reading password: %w", err)
+		// Not a terminal — read from stdin directly.
+		pw, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return "", "", fmt.Errorf("reading password: %w", readErr)
+		}
+		fmt.Println()
+		return username, strings.TrimSpace(pw), nil
 	}
+	fmt.Println() // newline after hidden input
 
 	return username, string(passwordBytes), nil
 }

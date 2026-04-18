@@ -2,6 +2,8 @@ package mapping
 
 import (
 	"fmt"
+	"strconv"
+	"time"
 
 	"github.com/djgrove/strava-attackpoint/internal/attackpoint"
 	"github.com/djgrove/strava-attackpoint/internal/strava"
@@ -13,15 +15,30 @@ func MapActivity(activity *strava.Activity, apTypes []attackpoint.SelectOption) 
 
 	description := buildDescription(activity)
 
+	// Parse activity date.
+	startTime, err := activity.StartTime()
+	if err != nil {
+		startTime = time.Now()
+	}
+
 	workout := &attackpoint.WorkoutData{
 		ActivityTypeID: typeID,
-		Distance:       formatDistance(activity.Distance),
+		Day:            fmt.Sprintf("%02d", startTime.Day()),
+		Month:          fmt.Sprintf("%02d", int(startTime.Month())),
+		Year:           strconv.Itoa(startTime.Year()),
+		StartHour:      strconv.Itoa(startTime.Hour()),
+		Distance:       formatDistanceMiles(activity.Distance),
+		DistanceUnits:  "miles",
 		Duration:       formatDuration(activity.MovingTime),
 		Description:    description,
 	}
 
 	if activity.HasHeartrate && activity.AverageHeartrate > 0 {
 		workout.AverageHR = fmt.Sprintf("%.0f", activity.AverageHeartrate)
+	}
+
+	if activity.HasHeartrate && activity.MaxHeartrate > 0 {
+		workout.MaxHR = fmt.Sprintf("%.0f", activity.MaxHeartrate)
 	}
 
 	if activity.TotalElevationGain > 0 {
@@ -31,27 +48,23 @@ func MapActivity(activity *strava.Activity, apTypes []attackpoint.SelectOption) 
 	return workout, warning
 }
 
-// formatDistance converts meters to kilometers with 2 decimal places.
-func formatDistance(meters float64) string {
+// formatDistanceMiles converts meters to miles with 2 decimal places.
+func formatDistanceMiles(meters float64) string {
 	if meters <= 0 {
 		return ""
 	}
-	km := meters / 1000.0
-	return fmt.Sprintf("%.2f", km)
+	miles := meters / 1609.344
+	return fmt.Sprintf("%.2f", miles)
 }
 
-// formatDuration converts seconds to HH:MM:SS.
+// formatDuration converts seconds to H:MM format (what AP expects).
 func formatDuration(seconds int) string {
 	if seconds <= 0 {
 		return ""
 	}
 	h := seconds / 3600
 	m := (seconds % 3600) / 60
-	s := seconds % 60
-	if h > 0 {
-		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
-	}
-	return fmt.Sprintf("%d:%02d", m, s)
+	return fmt.Sprintf("%d:%02d", h, m)
 }
 
 func buildDescription(activity *strava.Activity) string {

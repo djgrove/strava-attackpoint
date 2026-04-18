@@ -23,61 +23,58 @@ func (c *Client) DiscoverForm() (*FormSchema, error) {
 	return ParseForm(resp.Body)
 }
 
-// ParseForm parses an HTML form to extract field names, types, and select options.
+// formInfo tracks fields discovered within a single <form> element.
+type formInfo struct {
+	action string
+	fields map[string]FormField
+}
+
+// ParseForm parses HTML to find the training form (the one with activitytypeid)
+// and extract its fields.
 func ParseForm(r io.Reader) (*FormSchema, error) {
 	doc, err := html.Parse(r)
 	if err != nil {
 		return nil, fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	schema := &FormSchema{
-		Fields: make(map[string]FormField),
-	}
+	// Collect all forms and their fields.
+	var forms []formInfo
+	var currentForm *formInfo
 
-	// Find the form and extract fields.
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
-		switch n.Type {
-		case html.ElementNode:
+		if n.Type == html.ElementNode && n.Data == "form" {
+			fi := formInfo{
+				action: getAttr(n, "action"),
+				fields: make(map[string]FormField),
+			}
+			forms = append(forms, fi)
+			currentForm = &forms[len(forms)-1]
+
+			// Walk children within this form context.
+			for child := n.FirstChild; child != nil; child = child.NextSibling {
+				walk(child)
+			}
+			currentForm = nil
+			return
+		}
+
+		if currentForm != nil && n.Type == html.ElementNode {
 			switch n.Data {
-			case "form":
-				if action := getAttr(n, "action"); action != "" && schema.Action == "" {
-					schema.Action = action
-				}
 			case "input":
-				name := getAttr(n, "name")
-				if name != "" {
-					schema.Fields[name] = FormField{
-						Name: name,
-						Type: "input",
-					}
+				if name := getAttr(n, "name"); name != "" {
+					currentForm.fields[name] = FormField{Name: name, Type: "input"}
 				}
 			case "textarea":
-				name := getAttr(n, "name")
-				if name != "" {
-					schema.Fields[name] = FormField{
-						Name: name,
-						Type: "textarea",
-					}
+				if name := getAttr(n, "name"); name != "" {
+					currentForm.fields[name] = FormField{Name: name, Type: "textarea"}
 				}
 			case "select":
-				name := getAttr(n, "name")
-				if name != "" {
+				if name := getAttr(n, "name"); name != "" {
 					options := extractOptions(n)
-					field := FormField{
-						Name:    name,
-						Type:    "select",
-						Options: options,
-					}
-					schema.Fields[name] = field
-
-					// Detect the activity type select.
-					nameLower := strings.ToLower(name)
-					if strings.Contains(nameLower, "activitytype") || strings.Contains(nameLower, "activity_type") {
-						schema.ActivityTypes = options
-					}
+					currentForm.fields[name] = FormField{Name: name, Type: "select", Options: options}
 				}
-				return // Don't recurse into select children — we already extracted options.
+				return // Don't recurse into select children.
 			}
 		}
 
@@ -86,6 +83,29 @@ func ParseForm(r io.Reader) (*FormSchema, error) {
 		}
 	}
 	walk(doc)
+
+	// Find the form that contains "activitytypeid" — that's the training form.
+	var trainingForm *formInfo
+	for i := range forms {
+		if _, ok := forms[i].fields["activitytypeid"]; ok {
+			trainingForm = &forms[i]
+			break
+		}
+	}
+
+	if trainingForm == nil {
+		return nil, fmt.Errorf("could not find training form (no activitytypeid field found)")
+	}
+
+	schema := &FormSchema{
+		Action: trainingForm.action,
+		Fields: trainingForm.fields,
+	}
+
+	// Extract activity types from the activitytypeid select.
+	if field, ok := trainingForm.fields["activitytypeid"]; ok {
+		schema.ActivityTypes = field.Options
+	}
 
 	return schema, nil
 }
