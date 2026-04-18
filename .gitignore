@@ -1,0 +1,16 @@
+# Binary
+strava-ap
+strava-ap.exe
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build output
+dist/
