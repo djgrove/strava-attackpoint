@@ -163,7 +163,10 @@ function parseTrainingForm(html) {
 
   const activityTypes = [];
   if (typeSelectMatch) {
-    const optionPattern = /value="([^"]*)"[^>]*>([^<]*)/g;
+    // Match both quoted and unquoted value attributes:
+    //   <option value=29836>Orienteering
+    //   <option value="29836">Orienteering
+    const optionPattern = /<option\s+value=["']?([^"'>\s]+)["']?[^>]*>([^<]*)/gi;
     let optMatch;
     while ((optMatch = optionPattern.exec(typeSelectMatch[0])) !== null) {
       const label = optMatch[2].trim();
