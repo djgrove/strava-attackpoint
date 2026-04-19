@@ -17,7 +17,8 @@ A Go CLI tool that syncs Strava activities to AttackPoint.org training log entri
 
 - **AttackPoint has no API.** We log in via HTTP POST, parse HTML forms at runtime to discover field names, and submit workouts via form POST. This "form discovery" approach makes us resilient to AP changing field names.
 - **Idempotency** is tracked via a local `sync_state.json` file mapping Strava activity IDs to AP entries.
-- **Strava OAuth tokens** are stored locally and auto-refreshed. AP credentials are prompted each run.
+- **Strava OAuth** uses a Lambda proxy (`infra/`) that holds the client secret. The CLI never sees the secret — it sends auth codes and refresh tokens to the proxy, which injects the secret and forwards to Strava. Tokens are stored in the OS keychain.
+- AP credentials are prompted each run (not stored).
 
 ## Conventions
 
@@ -26,6 +27,14 @@ A Go CLI tool that syncs Strava activities to AttackPoint.org training log entri
 - Errors are wrapped with context: `fmt.Errorf("doing X: %w", err)`
 - Activity type mapping: static table in `internal/mapping/activity_type.go`, validated against AP form options at runtime
 - Orienteering override: if activity name/description contains "orienteering" (case-insensitive), type is set to Orienteering regardless of Strava sport type
+
+## Infrastructure
+
+The OAuth proxy lives in `infra/`, managed with Pulumi:
+- `infra/index.ts` — Pulumi stack (Lambda + Function URL + IAM)
+- `infra/lambda/index.mjs` — Lambda handler (token exchange + refresh)
+- Deploy: `cd infra && pulumi up`
+- The Lambda Function URL is compiled into the Go binary as `strava.ProxyURL`
 
 ## Building
 

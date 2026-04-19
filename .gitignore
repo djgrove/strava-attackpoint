@@ -15,5 +15,11 @@ Thumbs.db
 # Credentials
 login.txt
 
+# Node
+infra/node_modules/
+
+# Pulumi
+infra/bin/
+
 # Build output
 dist/

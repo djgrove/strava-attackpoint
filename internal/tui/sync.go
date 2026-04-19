@@ -188,7 +188,8 @@ func (m syncModel) startSync() tea.Cmd {
 		if err != nil {
 			return syncCompleteMsg{err: fmt.Errorf("loading config: %w", err)}
 		}
-		if cfg.StravaClientID == "" {
+		token, _ := config.GetAccessToken()
+		if token == "" {
 			return syncCompleteMsg{err: fmt.Errorf("Strava not configured — use Setup first")}
 		}
 

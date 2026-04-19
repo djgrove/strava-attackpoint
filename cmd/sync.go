@@ -50,7 +50,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	if cfg.StravaClientID == "" {
+	// Check if setup has been run (tokens exist).
+	token, _ := config.GetAccessToken()
+	if token == "" {
 		return fmt.Errorf("Strava not configured — run 'strava-ap setup' first")
 	}
 

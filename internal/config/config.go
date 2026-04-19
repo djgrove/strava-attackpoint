@@ -17,8 +17,7 @@ const (
 
 // Config holds non-secret configuration.
 type Config struct {
-	StravaClientID string    `json:"strava_client_id"`
-	TokenExpiry    time.Time `json:"token_expiry"`
+	TokenExpiry time.Time `json:"token_expiry"`
 }
 
 // SyncState tracks which Strava activities have been synced to AP.
@@ -121,8 +120,6 @@ func DeleteSecret(key string) error {
 
 // Convenience accessors for Strava secrets.
 
-func GetClientSecret() (string, error)              { return GetSecret("strava-client-secret") }
-func SetClientSecret(v string) error                 { return SetSecret("strava-client-secret", v) }
 func GetAccessToken() (string, error)                { return GetSecret("strava-access-token") }
 func SetAccessToken(v string) error                  { return SetSecret("strava-access-token", v) }
 func GetRefreshToken() (string, error)               { return GetSecret("strava-refresh-token") }

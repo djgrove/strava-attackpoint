@@ -1,0 +1,3 @@
+name: strava-ap-infra
+runtime: nodejs
+description: OAuth proxy for strava-ap CLI

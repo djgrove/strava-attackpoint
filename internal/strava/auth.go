@@ -1,6 +1,7 @@
 package strava
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -17,13 +18,19 @@ import (
 
 const (
 	authorizeURL = "https://www.strava.com/oauth/authorize"
-	tokenURL     = "https://www.strava.com/oauth/token"
 	callbackPort = "8089"
+
+	// ClientID is public and safe to embed in the binary.
+	ClientID = "200536"
+
+	// ProxyURL is the Lambda Function URL that holds the client secret.
+	// Update this after deploying the infra/ stack.
+	ProxyURL = "https://PLACEHOLDER.lambda-url.us-west-2.on.aws"
 )
 
 // RunOAuthFlow performs the Strava OAuth2 authorization flow.
-// It starts a local server, opens the browser, and waits for the callback.
-func RunOAuthFlow(clientID, clientSecret string) error {
+// The client secret is held by the proxy — the CLI never sees it.
+func RunOAuthFlow() error {
 	state, err := randomState()
 	if err != nil {
 		return fmt.Errorf("generating state: %w", err)
@@ -66,7 +73,7 @@ func RunOAuthFlow(clientID, clientSecret string) error {
 
 	authURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&scope=read,activity:read_all&state=%s",
 		authorizeURL,
-		url.QueryEscape(clientID),
+		url.QueryEscape(ClientID),
 		url.QueryEscape("http://localhost:"+callbackPort+"/callback"),
 		url.QueryEscape(state),
 	)
@@ -86,22 +93,18 @@ func RunOAuthFlow(clientID, clientSecret string) error {
 		return fmt.Errorf("authorization timed out after 5 minutes")
 	}
 
-	// Exchange code for tokens.
-	token, err := exchangeToken(clientID, clientSecret, code)
+	// Exchange code for tokens via the proxy.
+	token, err := exchangeToken(code)
 	if err != nil {
 		return err
 	}
 
-	// Save config and secrets.
+	// Save tokens.
 	cfg := &config.Config{
-		StravaClientID: clientID,
-		TokenExpiry:    time.Unix(token.ExpiresAt, 0),
+		TokenExpiry: time.Unix(token.ExpiresAt, 0),
 	}
 	if err := config.SaveConfig(cfg); err != nil {
 		return fmt.Errorf("saving config: %w", err)
-	}
-	if err := config.SetClientSecret(clientSecret); err != nil {
-		return fmt.Errorf("saving client secret to keychain: %w", err)
 	}
 	if err := config.SetAccessToken(token.AccessToken); err != nil {
 		return fmt.Errorf("saving access token to keychain: %w", err)
@@ -114,15 +117,16 @@ func RunOAuthFlow(clientID, clientSecret string) error {
 	return nil
 }
 
-func exchangeToken(clientID, clientSecret, code string) (*TokenResponse, error) {
-	resp, err := http.PostForm(tokenURL, url.Values{
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
-		"code":          {code},
-		"grant_type":    {"authorization_code"},
+// exchangeToken sends the auth code to the proxy, which injects the secret.
+func exchangeToken(code string) (*TokenResponse, error) {
+	payload, _ := json.Marshal(map[string]string{
+		"code":       code,
+		"grant_type": "authorization_code",
 	})
+
+	resp, err := http.Post(ProxyURL+"/token", "application/json", bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("exchanging token: %w", err)
+		return nil, fmt.Errorf("exchanging token via proxy: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -137,7 +141,7 @@ func exchangeToken(clientID, clientSecret, code string) (*TokenResponse, error) 
 	return &token, nil
 }
 
-// RefreshAccessToken refreshes the access token if expired.
+// RefreshAccessToken refreshes the access token if expired, via the proxy.
 func RefreshAccessToken(cfg *config.Config) (string, error) {
 	accessToken, err := config.GetAccessToken()
 	if err != nil {
@@ -149,23 +153,18 @@ func RefreshAccessToken(cfg *config.Config) (string, error) {
 		return accessToken, nil
 	}
 
-	clientSecret, err := config.GetClientSecret()
-	if err != nil {
-		return "", fmt.Errorf("reading client secret: %w", err)
-	}
 	refreshToken, err := config.GetRefreshToken()
 	if err != nil {
 		return "", fmt.Errorf("reading refresh token: %w", err)
 	}
 
-	resp, err := http.PostForm(tokenURL, url.Values{
-		"client_id":     {cfg.StravaClientID},
-		"client_secret": {clientSecret},
-		"refresh_token": {refreshToken},
-		"grant_type":    {"refresh_token"},
+	payload, _ := json.Marshal(map[string]string{
+		"refresh_token": refreshToken,
 	})
+
+	resp, err := http.Post(ProxyURL+"/refresh", "application/json", bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("refreshing token: %w", err)
+		return "", fmt.Errorf("refreshing token via proxy: %w", err)
 	}
 	defer resp.Body.Close()
 
