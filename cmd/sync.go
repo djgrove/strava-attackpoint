@@ -18,6 +18,7 @@ import (
 
 var (
 	syncSince     string
+	syncEnd       string
 	syncActivity  string
 	syncCredsFile string
 )
@@ -35,6 +36,7 @@ Examples:
 
 func init() {
 	syncCmd.Flags().StringVar(&syncSince, "since", "", "Sync activities after this date (YYYY-MM-DD)")
+	syncCmd.Flags().StringVar(&syncEnd, "end", "", "Sync activities before this date (YYYY-MM-DD, default: today)")
 	syncCmd.Flags().StringVar(&syncActivity, "activity", "", "Re-sync a specific Strava activity ID")
 	syncCmd.Flags().StringVar(&syncCredsFile, "creds-file", "", "File with AP username on line 1, password on line 2")
 	rootCmd.AddCommand(syncCmd)
@@ -108,10 +110,18 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	since, err := time.Parse("2006-01-02", syncSince)
 	if err != nil {
-		return fmt.Errorf("invalid date format (use YYYY-MM-DD): %w", err)
+		return fmt.Errorf("invalid --since date format (use YYYY-MM-DD): %w", err)
 	}
 
-	results, err := engine.SyncSince(since)
+	var end time.Time
+	if syncEnd != "" {
+		end, err = time.Parse("2006-01-02", syncEnd)
+		if err != nil {
+			return fmt.Errorf("invalid --end date format (use YYYY-MM-DD): %w", err)
+		}
+	}
+
+	results, err := engine.SyncSince(since, end)
 	if err != nil {
 		return err
 	}

@@ -6,14 +6,18 @@ import (
 	"time"
 )
 
-// FetchActivitiesSince fetches all activities after the given time.
-func (c *Client) FetchActivitiesSince(since time.Time) ([]Activity, error) {
+// FetchActivities fetches all activities after since and optionally before end.
+// If end is zero, fetches up to now.
+func (c *Client) FetchActivities(since time.Time, end time.Time) ([]Activity, error) {
 	var all []Activity
 	page := 1
 	after := since.Unix()
 
 	for {
 		path := fmt.Sprintf("/athlete/activities?after=%d&page=%d&per_page=100", after, page)
+		if !end.IsZero() {
+			path += fmt.Sprintf("&before=%d", end.Unix())
+		}
 		resp, err := c.doRequest(path)
 		if err != nil {
 			return nil, err

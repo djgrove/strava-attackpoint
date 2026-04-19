@@ -39,8 +39,9 @@ func NewEngine(sc *strava.Client, ap *attackpoint.Client, state *config.SyncStat
 	}
 }
 
-// SyncSince syncs all activities after the given date.
-func (e *Engine) SyncSince(since time.Time) ([]Result, error) {
+// SyncSince syncs all activities after the given date, optionally before end.
+// If end is zero, syncs up to now.
+func (e *Engine) SyncSince(since time.Time, end time.Time) ([]Result, error) {
 	// Discover AP form.
 	schema, err := e.apClient.DiscoverForm()
 	if err != nil {
@@ -53,7 +54,7 @@ func (e *Engine) SyncSince(since time.Time) ([]Result, error) {
 	}
 
 	// Fetch Strava activities.
-	activities, err := e.stravaClient.FetchActivitiesSince(since)
+	activities, err := e.stravaClient.FetchActivities(since, end)
 	if err != nil {
 		return nil, fmt.Errorf("fetching Strava activities: %w", err)
 	}

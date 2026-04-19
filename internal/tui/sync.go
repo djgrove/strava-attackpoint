@@ -213,7 +213,7 @@ func (m syncModel) startSync() tea.Cmd {
 
 		since, _ := time.Parse("2006-01-02", m.dateInput.Value())
 		engine := syncpkg.NewEngine(stravaClient, apClient, state)
-		results, err := engine.SyncSince(since)
+		results, err := engine.SyncSince(since, time.Time{})
 		return syncCompleteMsg{results: results, err: err}
 	}
 }
