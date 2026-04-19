@@ -36,6 +36,15 @@ export async function fetchActivityDetail(accessToken, activityId) {
   return resp.json();
 }
 
+export async function verifyAthleteToken(accessToken) {
+  const resp = await fetch(`${BASE_URL}/athlete`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) throw new Error("Invalid Strava token");
+  const data = await resp.json();
+  return String(data.id);
+}
+
 export function estimateIntensity(avgHR, maxHR) {
   if (!avgHR || !maxHR || maxHR === 0) return 0;
   const ratio = avgHR / maxHR;

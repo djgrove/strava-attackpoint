@@ -47,6 +47,8 @@
         if (data.access_token) {
           sessionStorage.setItem("strava_access_token", data.access_token);
           sessionStorage.setItem("strava_refresh_token", data.refresh_token);
+          if (data.expires_at) sessionStorage.setItem("strava_token_expires_at", String(data.expires_at));
+          if (data.athlete && data.athlete.id) sessionStorage.setItem("strava_athlete_id", String(data.athlete.id));
           window.location.href = "index.html";
         } else {
           throw new Error(data.message || "Token exchange failed");

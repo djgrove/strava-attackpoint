@@ -102,6 +102,24 @@
 
   <div id="results" class="hidden"></div>
 
+  <!-- Auto-Sync (Optional) -->
+  <div class="step" id="step-autosync" style="margin-top: 32px; border-top: 1px solid #ddd; padding-top: 28px;">
+    <div class="step-header"><span class="num" style="background:#222;">+</span> Auto-Sync (Optional)</div>
+    <p style="font-size: 0.9em; color: #555; margin-bottom: 12px;">
+      Enable auto-sync to automatically push new Strava activities to AttackPoint as they are recorded.
+    </p>
+    <div class="disclaimer" style="margin-bottom: 16px;">
+      <strong>Note:</strong> This requires storing your AP credentials on our server (encrypted at rest).
+      They are only used to log in to AP when syncing activities. You can disable auto-sync at any time,
+      which immediately deletes your stored credentials.
+    </div>
+    <div id="autosync-status" style="margin-bottom: 12px;"></div>
+    <div id="autosync-controls">
+      <button class="btn-sync" id="autosync-enable-btn" onclick="enableAutoSync()" disabled style="background: #2e7d32; margin-bottom: 8px;">Enable Auto-Sync</button>
+      <button class="btn-sync" id="autosync-disable-btn" onclick="disableAutoSync()" style="background: #c62828; display: none;">Disable Auto-Sync</button>
+    </div>
+  </div>
+
   <footer>
     <a href="https://github.com/djgrove/strava-attackpoint">GitHub</a> &middot;
     CLI version also available
@@ -188,12 +206,123 @@
       btn.disabled = false;
     }
 
+    // --- Auto-Sync ---
+
+    function updateAutoSyncButton() {
+      const hasToken = sessionStorage.getItem("strava_access_token");
+      const hasUser = document.getElementById("ap-user").value.trim();
+      const hasPass = document.getElementById("ap-pass").value.trim();
+      document.getElementById("autosync-enable-btn").disabled = !(hasToken && hasUser && hasPass);
+    }
+
+    document.getElementById("ap-user").addEventListener("input", updateAutoSyncButton);
+    document.getElementById("ap-pass").addEventListener("input", updateAutoSyncButton);
+
+    async function checkAutoSyncStatus() {
+      const token = sessionStorage.getItem("strava_access_token");
+      if (!token) return;
+
+      try {
+        const resp = await fetch(`${PROXY_URL}/autosync-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ strava_access_token: token }),
+        });
+        const data = await resp.json();
+        const statusDiv = document.getElementById("autosync-status");
+        const enableBtn = document.getElementById("autosync-enable-btn");
+        const disableBtn = document.getElementById("autosync-disable-btn");
+
+        if (data.registered) {
+          let statusText = '<span class="connected">Auto-sync is active</span>';
+          if (data.last_sync_at) {
+            const ago = timeAgo(new Date(data.last_sync_at));
+            statusText += ` <span style="color:#888;">(last sync: ${ago})</span>`;
+          }
+          if (data.status && data.status !== "active") {
+            statusText = `<span style="color:#c62828;">Auto-sync error: ${data.status.replace(/_/g, " ")}</span>`;
+          }
+          statusDiv.innerHTML = statusText;
+          enableBtn.style.display = "none";
+          disableBtn.style.display = "block";
+        } else {
+          statusDiv.innerHTML = '<span style="color:#888;">Auto-sync is not enabled</span>';
+          enableBtn.style.display = "block";
+          disableBtn.style.display = "none";
+        }
+      } catch {}
+    }
+
+    async function enableAutoSync() {
+      const btn = document.getElementById("autosync-enable-btn");
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Enabling...';
+
+      try {
+        const resp = await fetch(`${PROXY_URL}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            strava_access_token: sessionStorage.getItem("strava_access_token"),
+            strava_refresh_token: sessionStorage.getItem("strava_refresh_token"),
+            strava_token_expires_at: Number(sessionStorage.getItem("strava_token_expires_at") || 0),
+            ap_username: document.getElementById("ap-user").value.trim(),
+            ap_password: document.getElementById("ap-pass").value.trim(),
+          }),
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        await checkAutoSyncStatus();
+      } catch (err) {
+        document.getElementById("autosync-status").innerHTML =
+          `<span style="color:#c62828;">Error: ${err.message}</span>`;
+      }
+      btn.textContent = "Enable Auto-Sync";
+      btn.disabled = false;
+    }
+
+    async function disableAutoSync() {
+      const btn = document.getElementById("autosync-disable-btn");
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Disabling...';
+
+      try {
+        const resp = await fetch(`${PROXY_URL}/unregister`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            strava_access_token: sessionStorage.getItem("strava_access_token"),
+          }),
+        });
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+        await checkAutoSyncStatus();
+      } catch (err) {
+        document.getElementById("autosync-status").innerHTML =
+          `<span style="color:#c62828;">Error: ${err.message}</span>`;
+      }
+      btn.textContent = "Disable Auto-Sync";
+      btn.disabled = false;
+    }
+
+    function timeAgo(date) {
+      const seconds = Math.floor((new Date() - date) / 1000);
+      if (seconds < 60) return "just now";
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return `${minutes}m ago`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours}h ago`;
+      const days = Math.floor(hours / 24);
+      return `${days}d ago`;
+    }
+
     // Set default "since" to 30 days ago.
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     document.getElementById("since").value = thirtyDaysAgo.toISOString().split("T")[0];
 
     checkAuth();
+    checkAutoSyncStatus();
   </script>
 </body>
 </html>

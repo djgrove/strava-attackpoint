@@ -3,3 +3,5 @@ config:
   strava-ap-infra:stravaClientId: "200536"
   strava-ap-infra:stravaClientSecret:
     secure: AAABAB63/lzxxU8NnqcqyCtu6kKK4ejel773g+eZJ34POV25FzujWbd0qKghdWLGO2Khin3tQtYfnLjWZuKEHnSuzfNirrxl
+  strava-ap-infra:webhookVerifyToken:
+    secure: AAABAD3BFE/2B0rey3Gh+ow6BD7/2rHe5yuVUrMiHOgLv64Z+EuOxTs8O7XxI7BVEiA5jqxU+ciOvhE178MRjw==
