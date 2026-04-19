@@ -2,4 +2,4 @@ config:
   aws:region: us-west-2
   strava-ap-infra:stravaClientId: "200536"
   strava-ap-infra:stravaClientSecret:
-    secure: AAABANPCUP+w5UpzG2z2iAYYYAiNqzEIowV6mNgiYNNgWgRpvpmFJkZXAtE5oh3QXnDjyyn4Y6J0AostsXrBwSG9KSrgqMl2
+    secure: AAABAB63/lzxxU8NnqcqyCtu6kKK4ejel773g+eZJ34POV25FzujWbd0qKghdWLGO2Khin3tQtYfnLjWZuKEHnSuzfNirrxl

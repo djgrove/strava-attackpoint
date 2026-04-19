@@ -16,12 +16,18 @@ export class APClient {
     });
 
     // Capture cookies from Set-Cookie headers.
-    const setCookies = resp.headers.getSetCookie?.() || [];
-    this.cookies = setCookies.map((c) => c.split(";")[0]).join("; ");
+    // Use getSetCookie() if available (Node 20+), fall back to raw header parsing.
+    let setCookies = [];
+    if (typeof resp.headers.getSetCookie === "function") {
+      setCookies = resp.headers.getSetCookie();
+    } else {
+      const raw = resp.headers.get("set-cookie");
+      if (raw) setCookies = raw.split(/,(?=\s*\w+=)/);
+    }
+    this.cookies = setCookies.map((c) => c.split(";")[0].trim()).join("; ");
 
     if (!this.cookies) throw new Error("Login failed — no session cookie received");
 
-    // Follow redirect and check we're not back at login.
     const location = resp.headers.get("location") || "";
     if (location.includes("login.jsp")) {
       throw new Error("Login failed — check your username and password");
@@ -55,15 +61,28 @@ export class APClient {
   async discoverForm() {
     const resp = await this.get("/newtraining.jsp");
     const html = await resp.text();
+
+    // Check if we're redirected to login (not authenticated).
+    if (html.includes("Please sign in") || html.includes("login.jsp")) {
+      throw new Error("AP session expired — not authenticated");
+    }
+
     return parseTrainingForm(html);
   }
 
   async submitWorkout(formAction, formData) {
     const resp = await this.post(formAction, formData);
+    const body = await resp.text();
+
     if (resp.status >= 400) {
-      const body = await resp.text();
       const errMatch = body.match(/<pre>([^<]+)<\/pre>/);
       throw new Error(errMatch ? errMatch[1] : `submission failed (${resp.status})`);
+    }
+
+    // Check for error in response body even on 200.
+    if (body.includes("400 Bad Request") || body.includes("missing required")) {
+      const errMatch = body.match(/<pre>([^<]+)<\/pre>/);
+      throw new Error(errMatch ? errMatch[1] : "submission failed");
     }
   }
 
@@ -98,7 +117,6 @@ export class APClient {
   }
 
   async deleteSession(sessionId) {
-    // Fetch edit page for CSRF token.
     const editResp = await this.get(`/edittrainingsession.jsp?sessionid=${sessionId}`);
     const editHtml = await editResp.text();
 
@@ -120,25 +138,38 @@ export class APClient {
 }
 
 function parseTrainingForm(html) {
-  // Find the form with activitytypeid — that's the training form.
-  const formActionMatch = html.match(/<form[^>]*action="([^"]*)"[^>]*>[\s\S]*?activitytypeid/);
   let action = "/addtraining.jsp";
-  if (formActionMatch) {
-    // Extract just the action from the form tag.
-    const actionMatch = formActionMatch[0].match(/action="([^"]*)"/);
-    if (actionMatch) action = actionMatch[1];
+
+  // Find all form actions and pick the training one.
+  const formPattern = /<form[^>]*action="([^"]*)"[^>]*>/gi;
+  let formMatch;
+  while ((formMatch = formPattern.exec(html)) !== null) {
+    const formAction = formMatch[1];
+    // Get the chunk of HTML from this form tag to the next form or end.
+    const startIdx = formMatch.index;
+    const nextForm = html.indexOf("<form", startIdx + 1);
+    const formChunk = nextForm > 0 ? html.substring(startIdx, nextForm) : html.substring(startIdx);
+
+    if (formChunk.includes("activitytypeid")) {
+      action = formAction;
+      break;
+    }
   }
 
-  // Extract activity types from the activitytypeid select.
-  const typeSelectMatch = html.match(
-    /name=activitytypeid[\s\S]*?<\/select>|name="activitytypeid"[\s\S]*?<\/select>/i
-  );
+  // Find the activitytypeid select element more broadly.
+  // The HTML may use name=activitytypeid (no quotes) or name="activitytypeid".
+  const selectPattern = /(?:name=activitytypeid|name="activitytypeid")[^>]*>[\s\S]*?<\/select>/i;
+  const typeSelectMatch = html.match(selectPattern);
+
   const activityTypes = [];
   if (typeSelectMatch) {
     const optionPattern = /value="([^"]*)"[^>]*>([^<]*)/g;
     let optMatch;
     while ((optMatch = optionPattern.exec(typeSelectMatch[0])) !== null) {
-      activityTypes.push({ value: optMatch[1], label: optMatch[2].trim() });
+      const label = optMatch[2].trim();
+      if (label) {
+        activityTypes.push({ value: optMatch[1], label });
+      }
     }
   }
 

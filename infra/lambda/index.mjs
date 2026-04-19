@@ -73,7 +73,7 @@ async function handleSync(body) {
   // 2. Discover form.
   const form = await ap.discoverForm();
   if (form.activityTypes.length === 0) {
-    throw new Error("No activity types found in AP form");
+    throw new Error("No activity types found in AP form — AP login may have failed silently");
   }
 
   // 3. Fetch Strava activities.
@@ -92,12 +92,6 @@ async function handleSync(body) {
     const result = { name: activity.name, strava_id: activity.id, status: "synced" };
 
     try {
-      // Check if already on AP.
-      if (existing[id]) {
-        // Delete and replace.
-        await ap.deleteSession(existing[id]);
-      }
-
       // Fetch full details.
       const detail = await fetchActivityDetail(strava_access_token, activity.id);
       const merged = { ...activity, ...detail };
@@ -107,8 +101,19 @@ async function handleSync(body) {
         ? estimateIntensity(merged.average_heartrate, merged.max_heartrate)
         : 0;
 
-      // Map and submit.
+      // Map fields (validate before deleting anything).
       const mapped = mapActivity(merged, form.activityTypes, intensity);
+
+      if (!mapped.formData.activitytypeid) {
+        throw new Error("No matching activity type in AP account");
+      }
+
+      // Delete existing ONLY after we've validated the replacement is ready.
+      if (existing[id]) {
+        await ap.deleteSession(existing[id]);
+      }
+
+      // Submit the new entry.
       await ap.submitWorkout(form.action, mapped.formData);
 
       if (mapped.warning) result.warning = mapped.warning;
