@@ -57,14 +57,19 @@ func formatDistanceMiles(meters float64) string {
 	return fmt.Sprintf("%.2f", miles)
 }
 
-// formatDuration converts seconds to H:MM format (what AP expects).
+// formatDuration converts seconds to HHMMSS format (what AP expects).
+// e.g., 300 seconds → "500" (5 min), 3661 seconds → "10101" (1h 1m 1s).
 func formatDuration(seconds int) string {
 	if seconds <= 0 {
 		return ""
 	}
 	h := seconds / 3600
 	m := (seconds % 3600) / 60
-	return fmt.Sprintf("%d:%02d", h, m)
+	s := seconds % 60
+	if h > 0 {
+		return fmt.Sprintf("%d%02d%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d%02d", m, s)
 }
 
 func buildDescription(activity *strava.Activity) string {
