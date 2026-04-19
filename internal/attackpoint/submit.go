@@ -20,6 +20,7 @@ type WorkoutData struct {
 	AverageHR      string
 	MaxHR          string
 	ElevationGain  string
+	Intensity      string // "0"-"5"
 	Description    string
 }
 
@@ -131,7 +132,7 @@ func buildFormData(schema *FormSchema, workout *WorkoutData) url.Values {
 		case name == "isplan":
 			data.Set(name, "0") // Not a planned workout
 		case name == "intensity":
-			data.Set(name, "0") // Default intensity
+			data.Set(name, workout.Intensity)
 		case name == "map":
 			data.Set(name, "0") // No map
 		case name == "shoes":

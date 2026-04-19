@@ -28,6 +28,19 @@ func (a *Activity) StartTime() (time.Time, error) {
 	return time.Parse(time.RFC3339, a.StartDateLocal)
 }
 
+// ZoneDistribution represents the time-in-zone data from Strava.
+type ZoneDistribution struct {
+	Type    string       `json:"type"`
+	Buckets []ZoneBucket `json:"distribution_buckets"`
+}
+
+// ZoneBucket is a single zone bucket with time spent.
+type ZoneBucket struct {
+	Min  int `json:"min"`
+	Max  int `json:"max"`
+	Time int `json:"time"` // seconds in this zone
+}
+
 // TokenResponse is the Strava OAuth token exchange response.
 type TokenResponse struct {
 	AccessToken  string `json:"access_token"`

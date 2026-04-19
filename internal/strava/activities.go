@@ -56,3 +56,42 @@ func (c *Client) FetchActivity(id int64) (*Activity, error) {
 	}
 	return &activity, nil
 }
+
+// FetchActivityZones fetches heart rate zone distribution for an activity.
+// Returns the dominant HR zone (1-5), or 0 if no HR data.
+func (c *Client) FetchActivityZones(id int64) (int, error) {
+	path := fmt.Sprintf("/activities/%d/zones", id)
+	resp, err := c.doRequest(path)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return 0, nil // Zones API not available (e.g., 402 for free accounts)
+	}
+
+	var zones []ZoneDistribution
+	if err := json.NewDecoder(resp.Body).Decode(&zones); err != nil {
+		return 0, nil
+	}
+
+	for _, z := range zones {
+		if z.Type == "heartrate" && len(z.Buckets) > 0 {
+			maxTime := 0
+			maxZone := 0
+			for i, bucket := range z.Buckets {
+				if bucket.Time > maxTime {
+					maxTime = bucket.Time
+					maxZone = i + 1
+				}
+			}
+			if maxZone > 5 {
+				maxZone = 5
+			}
+			return maxZone, nil
+		}
+	}
+
+	return 0, nil
+}

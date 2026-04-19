@@ -186,22 +186,52 @@ func (e *Engine) scanExistingEntries(since time.Time) error {
 	return nil
 }
 
+// estimateIntensity estimates AP intensity (0-5) from avg/max HR ratio.
+// Uses the ratio of average HR to max HR within the activity as a proxy for effort.
+func estimateIntensity(avgHR, maxHR float64) int {
+	if avgHR <= 0 || maxHR <= 0 {
+		return 0
+	}
+	ratio := avgHR / maxHR
+	switch {
+	case ratio >= 0.95: // avg very close to max = all-out effort
+		return 5
+	case ratio >= 0.90:
+		return 4
+	case ratio >= 0.85:
+		return 3
+	case ratio >= 0.78:
+		return 2
+	default:
+		return 1
+	}
+}
+
 func (e *Engine) syncActivity(activity *strava.Activity) Result {
-	// Fetch full details if we only have a summary (need description).
-	if activity.Description == "" {
-		detailed, err := e.stravaClient.FetchActivity(activity.ID)
-		if err != nil {
-			return Result{
-				ActivityID:   activity.ID,
-				ActivityName: activity.Name,
-				Status:       "failed",
-				Error:        fmt.Errorf("fetching activity details: %w", err),
-			}
+	// Fetch full details (need description field).
+	detailed, err := e.stravaClient.FetchActivity(activity.ID)
+	if err != nil {
+		return Result{
+			ActivityID:   activity.ID,
+			ActivityName: activity.Name,
+			Status:       "failed",
+			Error:        fmt.Errorf("fetching activity details: %w", err),
 		}
-		activity = detailed
+	}
+	activity = detailed
+
+	// Determine intensity from HR zones (premium) or avg/max HR ratio (fallback).
+	dominantZone := 0
+	if activity.HasHeartrate {
+		zone, err := e.stravaClient.FetchActivityZones(activity.ID)
+		if err == nil && zone > 0 {
+			dominantZone = zone
+		} else {
+			dominantZone = estimateIntensity(activity.AverageHeartrate, activity.MaxHeartrate)
+		}
 	}
 
-	workout, warning := mapping.MapActivity(activity, e.formSchema.ActivityTypes)
+	workout, warning := mapping.MapActivity(activity, e.formSchema.ActivityTypes, dominantZone)
 
 	if err := e.apClient.SubmitWorkout(e.formSchema, workout); err != nil {
 		return Result{

@@ -10,7 +10,8 @@ import (
 )
 
 // MapActivity converts a Strava activity into AP workout data.
-func MapActivity(activity *strava.Activity, apTypes []attackpoint.SelectOption) (*attackpoint.WorkoutData, string) {
+// dominantZone is the HR zone (1-5) with the most time, or 0 if unknown.
+func MapActivity(activity *strava.Activity, apTypes []attackpoint.SelectOption, dominantZone int) (*attackpoint.WorkoutData, string) {
 	typeID, _, warning := MapActivityType(activity.SportType, activity.Name, activity.Description, apTypes)
 
 	description := buildDescription(activity)
@@ -19,6 +20,12 @@ func MapActivity(activity *strava.Activity, apTypes []attackpoint.SelectOption) 
 	startTime, err := activity.StartTime()
 	if err != nil {
 		startTime = time.Now()
+	}
+
+	// Map HR zone to AP intensity (both use 0-5 scale).
+	intensity := "0"
+	if dominantZone > 0 && dominantZone <= 5 {
+		intensity = strconv.Itoa(dominantZone)
 	}
 
 	workout := &attackpoint.WorkoutData{
@@ -30,6 +37,7 @@ func MapActivity(activity *strava.Activity, apTypes []attackpoint.SelectOption) 
 		Distance:       formatDistanceMiles(activity.Distance),
 		DistanceUnits:  "miles",
 		Duration:       formatDuration(activity.MovingTime),
+		Intensity:      intensity,
 		Description:    description,
 	}
 
@@ -75,9 +83,6 @@ func formatDuration(seconds int) string {
 func buildDescription(activity *strava.Activity) string {
 	var parts []string
 
-	if activity.Name != "" {
-		parts = append(parts, activity.Name)
-	}
 	if activity.Description != "" {
 		parts = append(parts, activity.Description)
 	}
