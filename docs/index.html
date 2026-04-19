@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>strava-ap — Sync Strava to AttackPoint</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 600px; margin: 0 auto; padding: 40px 20px;
+      color: #222; background: #fafafa; line-height: 1.5;
+    }
+    h1 { font-size: 1.8em; margin-bottom: 4px; }
+    .subtitle { color: #666; margin-bottom: 32px; }
+    .step { margin-bottom: 28px; }
+    .step-header { font-weight: 600; font-size: 0.95em; color: #444; margin-bottom: 8px; }
+    .step-header .num { display: inline-block; width: 24px; height: 24px; background: #fc4c02; color: white; border-radius: 50%; text-align: center; line-height: 24px; font-size: 0.8em; margin-right: 8px; }
+    .connected { color: #2e7d32; font-weight: 600; }
+    label { display: block; font-size: 0.9em; color: #555; margin-bottom: 4px; }
+    input[type="text"], input[type="password"], input[type="date"] {
+      width: 100%; padding: 10px 12px; border: 1px solid #ccc; border-radius: 6px;
+      font-size: 1em; margin-bottom: 12px; background: white;
+    }
+    input:focus { outline: none; border-color: #fc4c02; box-shadow: 0 0 0 2px rgba(252,76,2,0.15); }
+    .row { display: flex; gap: 12px; }
+    .row > * { flex: 1; }
+    button {
+      padding: 12px 24px; border: none; border-radius: 6px; font-size: 1em;
+      cursor: pointer; font-weight: 600; transition: background 0.2s;
+    }
+    .btn-strava { background: #fc4c02; color: white; width: 100%; }
+    .btn-strava:hover { background: #e04400; }
+    .btn-sync { background: #222; color: white; width: 100%; }
+    .btn-sync:hover { background: #444; }
+    .btn-sync:disabled { background: #999; cursor: not-allowed; }
+    .disclaimer {
+      background: #f0f0f0; border-radius: 8px; padding: 14px 16px;
+      font-size: 0.85em; color: #555; margin-bottom: 28px; line-height: 1.5;
+    }
+    .disclaimer strong { color: #333; }
+    #results { margin-top: 24px; }
+    .result-item { padding: 8px 12px; border-radius: 6px; margin-bottom: 6px; font-size: 0.9em; }
+    .result-synced { background: #e8f5e9; color: #2e7d32; }
+    .result-skipped { background: #fff3e0; color: #e65100; }
+    .result-failed { background: #ffebee; color: #c62828; }
+    .summary { font-weight: 600; margin-top: 16px; padding: 12px; background: #e3f2fd; border-radius: 6px; }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid #ddd; border-top-color: #222; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 8px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hidden { display: none; }
+    a { color: #fc4c02; }
+    footer { margin-top: 48px; font-size: 0.8em; color: #999; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>strava-ap</h1>
+  <p class="subtitle">Sync your Strava activities to <a href="https://attackpoint.org">AttackPoint.org</a></p>
+
+  <div class="disclaimer">
+    <strong>Privacy:</strong> Your AttackPoint credentials are sent directly to AttackPoint's servers
+    to log in on your behalf. They are never stored, logged, or retained in any way. Your Strava
+    authorization tokens are stored only in your browser tab and cleared when you close it.
+    <a href="https://github.com/djgrove/strava-attackpoint">Source code</a> is fully open.
+  </div>
+
+  <!-- Step 1: Connect Strava -->
+  <div class="step" id="step-strava">
+    <div class="step-header"><span class="num">1</span> Connect Strava</div>
+    <div id="strava-status">
+      <button class="btn-strava" onclick="connectStrava()">Connect Strava</button>
+    </div>
+  </div>
+
+  <!-- Step 2: AP Credentials -->
+  <div class="step">
+    <div class="step-header"><span class="num">2</span> AttackPoint Credentials</div>
+    <label for="ap-user">Username</label>
+    <input type="text" id="ap-user" placeholder="Your AP username" autocomplete="username">
+    <label for="ap-pass">Password</label>
+    <input type="password" id="ap-pass" placeholder="Your AP password" autocomplete="current-password">
+  </div>
+
+  <!-- Step 3: Date Range -->
+  <div class="step">
+    <div class="step-header"><span class="num">3</span> Date Range</div>
+    <div class="row">
+      <div>
+        <label for="since">Since</label>
+        <input type="date" id="since">
+      </div>
+      <div>
+        <label for="end">End (optional)</label>
+        <input type="date" id="end">
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4: Sync -->
+  <div class="step">
+    <button class="btn-sync" id="sync-btn" onclick="startSync()" disabled>Sync Activities</button>
+  </div>
+
+  <div id="results" class="hidden"></div>
+
+  <footer>
+    <a href="https://github.com/djgrove/strava-attackpoint">GitHub</a> &middot;
+    CLI version also available
+  </footer>
+
+  <script>
+    const PROXY_URL = "https://m28wz39mbc.execute-api.us-west-2.amazonaws.com";
+    const STRAVA_CLIENT_ID = "200536";
+    const REDIRECT_URI = window.location.origin + window.location.pathname.replace(/\/[^/]*$/, "/callback.html");
+
+    // Check if we already have tokens (from callback).
+    function checkAuth() {
+      const token = sessionStorage.getItem("strava_access_token");
+      if (token) {
+        document.getElementById("strava-status").innerHTML =
+          '<span class="connected">Connected to Strava</span>';
+        updateSyncButton();
+      }
+    }
+
+    function connectStrava() {
+      const state = Math.random().toString(36).substring(2);
+      sessionStorage.setItem("oauth_state", state);
+      const url = `https://www.strava.com/oauth/authorize?client_id=${STRAVA_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=read,activity:read_all&state=${state}`;
+      window.location.href = url;
+    }
+
+    function updateSyncButton() {
+      const hasToken = sessionStorage.getItem("strava_access_token");
+      const hasUser = document.getElementById("ap-user").value.trim();
+      const hasPass = document.getElementById("ap-pass").value.trim();
+      const hasSince = document.getElementById("since").value;
+      document.getElementById("sync-btn").disabled = !(hasToken && hasUser && hasPass && hasSince);
+    }
+
+    document.getElementById("ap-user").addEventListener("input", updateSyncButton);
+    document.getElementById("ap-pass").addEventListener("input", updateSyncButton);
+    document.getElementById("since").addEventListener("input", updateSyncButton);
+
+    async function startSync() {
+      const btn = document.getElementById("sync-btn");
+      const resultsDiv = document.getElementById("results");
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span> Syncing...';
+      resultsDiv.classList.remove("hidden");
+      resultsDiv.innerHTML = '<span class="spinner"></span> Connecting to Strava and AttackPoint...';
+
+      const payload = {
+        strava_access_token: sessionStorage.getItem("strava_access_token"),
+        ap_username: document.getElementById("ap-user").value.trim(),
+        ap_password: document.getElementById("ap-pass").value.trim(),
+        since: document.getElementById("since").value,
+        end: document.getElementById("end").value || undefined,
+      };
+
+      try {
+        const resp = await fetch(`${PROXY_URL}/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await resp.json();
+
+        if (data.error) throw new Error(data.error);
+
+        let html = "";
+        for (const r of data.results) {
+          const cls = `result-${r.status}`;
+          const icon = r.status === "synced" ? "&#10003;" : r.status === "skipped" ? "&#8212;" : "&#10007;";
+          let text = `${icon} ${r.name}`;
+          if (r.warning) text += ` <small>(${r.warning})</small>`;
+          if (r.error) text += ` <small>(${r.error})</small>`;
+          html += `<div class="result-item ${cls}">${text}</div>`;
+        }
+
+        html += `<div class="summary">${data.summary.synced} synced, ${data.summary.skipped} skipped, ${data.summary.failed} failed</div>`;
+        resultsDiv.innerHTML = html;
+      } catch (err) {
+        resultsDiv.innerHTML = `<div class="result-item result-failed">Error: ${err.message}</div>`;
+      }
+
+      btn.textContent = "Sync Activities";
+      btn.disabled = false;
+    }
+
+    // Set default "since" to 30 days ago.
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    document.getElementById("since").value = thirtyDaysAgo.toISOString().split("T")[0];
+
+    checkAuth();
+  </script>
+</body>
+</html>

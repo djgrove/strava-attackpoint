@@ -23,8 +23,8 @@ const (
 	// ClientID is public and safe to embed in the binary.
 	ClientID = "200536"
 
-	// ProxyURL is the Lambda Function URL that holds the client secret.
-	ProxyURL = "https://ooclphfu65c7bsyfwjsso2dge40eiwts.lambda-url.us-west-2.on.aws"
+	// ProxyURL is the API Gateway endpoint for the OAuth proxy Lambda.
+	ProxyURL = "https://m28wz39mbc.execute-api.us-west-2.amazonaws.com"
 )
 
 // RunOAuthFlow performs the Strava OAuth2 authorization flow.

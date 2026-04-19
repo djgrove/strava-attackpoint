@@ -36,6 +36,15 @@ const fn = new aws.lambda.Function("strava-ap-proxy", {
     "index.mjs": new pulumi.asset.FileAsset(
       path.join(__dirname, "lambda", "index.mjs")
     ),
+    "strava.mjs": new pulumi.asset.FileAsset(
+      path.join(__dirname, "lambda", "strava.mjs")
+    ),
+    "attackpoint.mjs": new pulumi.asset.FileAsset(
+      path.join(__dirname, "lambda", "attackpoint.mjs")
+    ),
+    "mapping.mjs": new pulumi.asset.FileAsset(
+      path.join(__dirname, "lambda", "mapping.mjs")
+    ),
   }),
   environment: {
     variables: {
@@ -43,15 +52,49 @@ const fn = new aws.lambda.Function("strava-ap-proxy", {
       STRAVA_CLIENT_SECRET: stravaClientSecret,
     },
   },
-  memorySize: 128,
-  timeout: 10,
+  memorySize: 256,
+  timeout: 120,
   reservedConcurrentExecutions: 1,
 });
 
-// Function URL (public HTTPS endpoint, no API Gateway needed).
-const fnUrl = new aws.lambda.FunctionUrl("strava-ap-proxy-url", {
-  functionName: fn.name,
-  authorizationType: "NONE",
+// API Gateway HTTP API (replaces Function URL which has auth issues).
+const api = new aws.apigatewayv2.Api("strava-ap-api", {
+  protocolType: "HTTP",
+  corsConfiguration: {
+    allowOrigins: ["*"],
+    allowMethods: ["POST", "OPTIONS"],
+    allowHeaders: ["Content-Type"],
+  },
 });
 
-export const functionUrl = fnUrl.functionUrl;
+// Lambda integration.
+const integration = new aws.apigatewayv2.Integration("strava-ap-integration", {
+  apiId: api.id,
+  integrationType: "AWS_PROXY",
+  integrationUri: fn.arn,
+  payloadFormatVersion: "2.0",
+});
+
+// Catch-all route.
+const route = new aws.apigatewayv2.Route("strava-ap-route", {
+  apiId: api.id,
+  routeKey: "POST /{proxy+}",
+  target: pulumi.interpolate`integrations/${integration.id}`,
+});
+
+// Default stage with auto-deploy.
+const stage = new aws.apigatewayv2.Stage("strava-ap-stage", {
+  apiId: api.id,
+  name: "$default",
+  autoDeploy: true,
+});
+
+// Allow API Gateway to invoke the Lambda.
+new aws.lambda.Permission("strava-ap-apigw", {
+  action: "lambda:InvokeFunction",
+  function: fn.name,
+  principal: "apigateway.amazonaws.com",
+  sourceArn: pulumi.interpolate`${api.executionArn}/*/*`,
+});
+
+export const apiUrl = api.apiEndpoint;
